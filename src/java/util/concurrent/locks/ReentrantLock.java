@@ -129,16 +129,20 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         final boolean nonfairTryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
+            //如果 c==0 表示，当前的锁刚好释放了
             if (c == 0) {
+                //用 CAS 尝试获取
                 if (compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            // 当前请求锁的线程和当前持有锁的线程释放同个线程 (即符合重入锁)
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0) // overflow
                     throw new Error("Maximum lock count exceeded");
+                //记录重入锁的数量
                 setState(nextc);
                 return true;
             }
@@ -146,11 +150,13 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         }
 
         protected final boolean tryRelease(int releases) {
+            // state 记录着重入的次数，当 state=0，表示开始释放锁操作
             int c = getState() - releases;
+            //释放锁操作的线程必须式当前已经获得锁的线程
             if (Thread.currentThread() != getExclusiveOwnerThread())
                 throw new IllegalMonitorStateException();
             boolean free = false;
-            if (c == 0) {
+            if (c == 0) {//将排他锁的 Owner 设置为 null
                 free = true;
                 setExclusiveOwnerThread(null);
             }
@@ -203,9 +209,12 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * acquire on failure.
          */
         final void lock() {
+            //非公平锁的常规操作，先 CAS 一下，抢占成功就抢
             if (compareAndSetState(0, 1))
+                // 因为保存当前获得锁的线程,下次再来的时候不要再尝试竞争锁
                 setExclusiveOwnerThread(Thread.currentThread());
             else
+                //抢不到锁，走锁竞争逻辑
                 acquire(1);
         }
 
@@ -232,6 +241,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
             final Thread current = Thread.currentThread();
             int c = getState();
             if (c == 0) {
+                //没有前驱节点，CAS 抢一下锁
                 if (!hasQueuedPredecessors() &&
                     compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
