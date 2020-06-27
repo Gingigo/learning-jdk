@@ -702,9 +702,13 @@ public abstract class AbstractQueuedSynchronizer
          * while we are doing this. Also, unlike other uses of
          * unparkSuccessor, we need to know if CAS to reset status
          * fails, if so rechecking.
+         *
+         * PROPAGATE： 标识为 PROPAGATE 状态的节点，是共享锁模式下的节点状态，处于这个状态
+         * 下的节点，会对线程的唤醒进行传播
          */
         for (;;) {
             Node h = head;
+            //先判断头结点是不是 SIGNAL 状态，如果是，则修改为 0，并且唤醒头结点的下一个节点
             if (h != null && h != tail) {
                 int ws = h.waitStatus;
                 if (ws == Node.SIGNAL) {
@@ -712,10 +716,14 @@ public abstract class AbstractQueuedSynchronizer
                         continue;            // loop to recheck cases
                     unparkSuccessor(h);
                 }
+                //这个 CAS 失败的场景是：执行到这里的时候，刚好有一个节点入队，入队会将这个 ws 设置为 -1
                 else if (ws == 0 &&
                          !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
                     continue;                // loop on failed CAS
             }
+
+            // 如果到这里的时候，前面唤醒的线程已经占领了 head，那么再循环
+            // 通过检查头节点是否改变了，如果改变了就继续循环
             if (h == head)                   // loop if head changed
                 break;
         }
@@ -728,6 +736,7 @@ public abstract class AbstractQueuedSynchronizer
      *
      * @param node the node
      * @param propagate the return value from a tryAcquireShared
+     * 把被唤醒的节点，设置成 head 节点。 然后继续唤醒队列中的其他线程
      */
     private void setHeadAndPropagate(Node node, int propagate) {
         Node h = head; // Record old head for check below
@@ -1023,14 +1032,17 @@ public abstract class AbstractQueuedSynchronizer
             for (;;) {
                 final Node p = node.predecessor();
                 if (p == head) {
+                    //就判断尝试获取锁
                     int r = tryAcquireShared(arg);
-                    if (r >= 0) {
+                    //r>=0 表示获取到了执行权限，这个时候因为 state!=0，所以不会执行这段代码
+                    if (r >= 0) {//线程被唤醒后开始执行的地方
                         setHeadAndPropagate(node, r);
                         p.next = null; // help GC
                         failed = false;
                         return;
                     }
                 }
+                //阻塞线程
                 if (shouldParkAfterFailedAcquire(p, node) &&
                     parkAndCheckInterrupt())
                     throw new InterruptedException();
@@ -1341,6 +1353,7 @@ public abstract class AbstractQueuedSynchronizer
             throws InterruptedException {
         if (Thread.interrupted())
             throw new InterruptedException();
+        //  state 如果不等于 0，说明当前线程需要加入到共享锁队列中
         if (tryAcquireShared(arg) < 0)
             doAcquireSharedInterruptibly(arg);
     }
@@ -1920,6 +1933,7 @@ public abstract class AbstractQueuedSynchronizer
                     lastWaiter = null;
                 // 将 next 节点设置成 null
                 first.nextWaiter = null;
+                //transferForSignal 将从 condition 队列中转移到 AQS 队列中
             } while (!transferForSignal(first) &&
                      (first = firstWaiter) != null);
         }
