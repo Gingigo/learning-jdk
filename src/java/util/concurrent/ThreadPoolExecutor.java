@@ -377,16 +377,24 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * we can only terminate if, after seeing that it is empty, we see
      * that workerCount is 0 (which sometimes entails a recheck -- see
      * below).
+     * 一个 int 数值是 32 个 bit 位，这里采用高 3 位来保存运行状态，低 29 位来保存线程数量
      */
     private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
-    private static final int COUNT_BITS = Integer.SIZE - 3;
+    private static final int COUNT_BITS = Integer.SIZE - 3; // 32-3=29
+    //将 1 的二进制向右位移 29 位,再减 1 表示最大线程容量
     private static final int CAPACITY   = (1 << COUNT_BITS) - 1;
 
     // runState is stored in the high-order bits
+    //运行状态保存在 int 值的高 3 位 (所有数值左移 29 位)
+    // -1<<29 = 111
     private static final int RUNNING    = -1 << COUNT_BITS;
+    // 线程池不接收新任务,但是执行队列中的任务
     private static final int SHUTDOWN   =  0 << COUNT_BITS;
+    //线程池不接收新任务,不执行队列中的任务,中断正在执行中的任务
     private static final int STOP       =  1 << COUNT_BITS;
+    //线程池所有的任务都已结束,线程数量为 0,处于该状态的线程池即将调用 terminated()方法
     private static final int TIDYING    =  2 << COUNT_BITS;
+    //线程池terminated()方法执行完成
     private static final int TERMINATED =  3 << COUNT_BITS;
 
     // Packing and unpacking ctl
@@ -591,6 +599,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * the thread actually starts running tasks, we initialize lock
      * state to a negative value, and clear it upon start (in
      * runWorker).
+     * 1.每个 worker,都是一条线程,同时里面包含了一个 firstTask,即初始化时要被首先执行的任务.
+     * 2.最终执行任务的,是 runWorker()方法，Worker 类继承了 AQS，并实现了 Runnable 接口，注意其中的 firstTask 和 thread 属性：
+     * firstTask 用它来保存传入的任务；thread 是在调用构造方法时通过 ThreadFactory 来创建的
+     * 线程，是用来处理任务的线程。
      */
     private final class Worker
         extends AbstractQueuedSynchronizer
@@ -603,10 +615,13 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         private static final long serialVersionUID = 6138294804551838833L;
 
         /** Thread this worker is running in.  Null if factory fails. */
+        //这才是真正执行 task 的线程，从构造函数可知是由ThreadFactury 创建的
         final Thread thread;
         /** Initial task to run.  Possibly null. */
+        //这就是需要执行的 task
         Runnable firstTask;
         /** Per-thread task counter */
+        //完成的任务数，用于线程池统计
         volatile long completedTasks;
 
         /**
@@ -614,6 +629,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
          * @param firstTask the first task (null if none)
          */
         Worker(Runnable firstTask) {
+            //初始状态 -1,防止在调用 runWorker()，也就是真正执行 task前中断 thread。
             setState(-1); // inhibit interrupts until runWorker
             this.firstTask = firstTask;
             this.thread = getThreadFactory().newThread(this);
@@ -897,14 +913,27 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * value to ensure reads of fresh values after checking other pool
      * state).
      * @return true if successful
+     * 做了两件事情：
+     *  1.才用循环 CAS 操作来将线程数加 1
+     *  2.新建一个线程并启用
      */
     private boolean addWorker(Runnable firstTask, boolean core) {
-        retry:
+        retry: // goto 语句，避免死循环
         for (;;) {
+            //获取线程池中保存的线程数量
             int c = ctl.get();
+            //获取线程池的状态
             int rs = runStateOf(c);
 
             // Check if queue empty only if necessary.
+            /*
+            如果线程处于非运行状态，并且 rs 不等于 SHUTDOWN 且 firstTask 不等于空且
+            workQueue 为空，直接返回 false（表示不可添加 work 状态）
+                1.线程池已经 shutdown 后，还要添加新的任务，拒绝
+                2.（第二个判断）SHUTDOWN 状态不接受新任务，但仍然会执行已经加入任务队列的任
+                务，所以当进入 SHUTDOWN 状态，而传进来的任务为空，并且任务队列不为空的时候，是允许添加
+                新线程的,如果把这个条件取反，就表示不允许添加 worker
+            */
             if (rs >= SHUTDOWN &&
                 ! (rs == SHUTDOWN &&
                    firstTask == null &&
@@ -912,57 +941,69 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                 return false;
 
             for (;;) {
+                //获得 Worker 工作线程数
                 int wc = workerCountOf(c);
+                //如果工作线程数大于默认容量大小或者大于核心线程数大小，则直接返回 false 表示不能再添加 worker。
                 if (wc >= CAPACITY ||
                     wc >= (core ? corePoolSize : maximumPoolSize))
                     return false;
+                //通过 cas 来增加工作线程数，如果 cas 失败，则直接重试
                 if (compareAndIncrementWorkerCount(c))
                     break retry;
+                //再次获取 ctl（线程池中的线程数量） 的值
                 c = ctl.get();  // Re-read ctl
+                //这里如果不相等，说明线程池的状态发生了变化，继续重试
                 if (runStateOf(c) != rs)
                     continue retry;
                 // else CAS failed due to workerCount change; retry inner loop
             }
         }
-
-        boolean workerStarted = false;
-        boolean workerAdded = false;
+        //上面这段代码主要是对 worker 数量做原子+1 操作,下面的逻辑才是正式构建一个 worker
+        boolean workerStarted = false;//工作线程是否启动的标识
+        boolean workerAdded = false;//工作线程是否已经添加成功的标识
         Worker w = null;
         try {
+            //构建一个 Worker，这个 worker 是什么呢？我们可以看到构造方法里面传入了一个 Runnable 对象
             w = new Worker(firstTask);
+            //从 worker 对象中取出线程
             final Thread t = w.thread;
             if (t != null) {
                 final ReentrantLock mainLock = this.mainLock;
-                mainLock.lock();
+                mainLock.lock();// 重入锁，避免并发问题
                 try {
                     // Recheck while holding lock.
                     // Back out on ThreadFactory failure or if
                     // shut down before lock acquired.
                     int rs = runStateOf(ctl.get());
-
+                    //只有当前线程池是正在运行状态，[或是 SHUTDOWN 且 firstTask 为空]，才
+                    //能添加到 workers 集合中
                     if (rs < SHUTDOWN ||
                         (rs == SHUTDOWN && firstTask == null)) {
+                        //任务刚封装到 work 里面，还没 start,你封装的线程就是 alive
                         if (t.isAlive()) // precheck that t is startable
                             throw new IllegalThreadStateException();
+                        //将新创建的 Worker 添加到 workers 集合中
                         workers.add(w);
                         int s = workers.size();
+                        //如果集合中的工作线程数大于最大线程数，这个最大线程数表示线程池曾经出现过的最大线程数
                         if (s > largestPoolSize)
-                            largestPoolSize = s;
-                        workerAdded = true;
+                            largestPoolSize = s;///更新线程池出现过的最大线程数
+                        workerAdded = true;//表示工作线程创建成功了
                     }
                 } finally {
-                    mainLock.unlock();
+                    mainLock.unlock();//释放锁
                 }
-                if (workerAdded) {
-                    t.start();
+                if (workerAdded) {//如果 worker 添加成功
+                    t.start();//启动线程
                     workerStarted = true;
                 }
             }
         } finally {
+            //如果添加失败，就需要做一件事，就是递减实际工作线 程数(还记得我们最开始的时候增加了工作线程数吗)
             if (! workerStarted)
                 addWorkerFailed(w);
         }
-        return workerStarted;
+        return workerStarted;//返回结果
     }
 
     /**
@@ -1300,13 +1341,14 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @throws NullPointerException if {@code workQueue}
      *         or {@code threadFactory} or {@code handler} is null
      */
-    public ThreadPoolExecutor(int corePoolSize,
-                              int maximumPoolSize,
-                              long keepAliveTime,
-                              TimeUnit unit,
-                              BlockingQueue<Runnable> workQueue,
-                              ThreadFactory threadFactory,
-                              RejectedExecutionHandler handler) {
+    public ThreadPoolExecutor(int corePoolSize, //核心线程数量
+                              int maximumPoolSize, //最大线程数
+                              long keepAliveTime, // 超时时间，超出核心线程数量以外的线程空余存活时间
+                              TimeUnit unit, // 存活时间单位
+                              BlockingQueue<Runnable> workQueue, //保存执行任务的队列
+                              ThreadFactory threadFactory, //创建新线程的工厂
+                              RejectedExecutionHandler handler//当任务无法执行的时候的处理方式
+    ) {
         if (corePoolSize < 0 ||
             maximumPoolSize <= 0 ||
             maximumPoolSize < corePoolSize ||
@@ -1363,20 +1405,23 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
          * and so reject the task.
          */
         int c = ctl.get();
-        if (workerCountOf(c) < corePoolSize) {
+        if (workerCountOf(c) < corePoolSize) {//1.当前池中线程比核心数少，新建一个线程执行任务
             if (addWorker(command, true))
                 return;
             c = ctl.get();
         }
-        if (isRunning(c) && workQueue.offer(command)) {
+
+        if (isRunning(c) && workQueue.offer(command)) {//2.核心池已满，但任务队列未满，添加到队列中
             int recheck = ctl.get();
+            //任务成功添加到队列以后，再次检查是否需要添加新的线程，因为已存在的线程可能被销毁了
             if (! isRunning(recheck) && remove(command))
+                ///如果线程池处于非运行状态，并且把当前的任务从任务队列中 移除成功，则拒绝该任务
                 reject(command);
-            else if (workerCountOf(recheck) == 0)
+            else if (workerCountOf(recheck) == 0)//如果之前的线程已被销毁完，新建一个线程
                 addWorker(null, false);
         }
-        else if (!addWorker(command, false))
-            reject(command);
+        else if (!addWorker(command, false))//3.核心池已满，队列已满，试着创建一个新线程
+            reject(command);////如果创建新线程失败了，说明线程池被关闭或者线程池完全满了，拒绝任务
     }
 
     /**

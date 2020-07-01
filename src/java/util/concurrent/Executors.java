@@ -84,6 +84,9 @@ public class Executors {
      * @param nThreads the number of threads in the pool
      * @return the newly created thread pool
      * @throws IllegalArgumentException if {@code nThreads <= 0}
+     * 该方法返回一个固定数量的线程池，线程数不变，当有一个任务提交
+     * 时，若线程池中空闲，则立即执行，若没有，则会被暂缓在一个任务队列中，等待有空闲的
+     * 线程去执行。
      */
     public static ExecutorService newFixedThreadPool(int nThreads) {
         return new ThreadPoolExecutor(nThreads, nThreads,
@@ -166,6 +169,16 @@ public class Executors {
      * guaranteed not to be reconfigurable to use additional threads.
      *
      * @return the newly created single-threaded Executor
+     * 创建一个线程的线程池，若空闲则执行，若没有空闲线程则暂缓在任务队列中。
+     *
+     * 执行流程：
+     *  1.线程数少于核心线程数，也就是设置的线程数时，新建线程执行任务
+     *  2.线程数等于核心线程数后，将任务加入阻塞队列
+     *  3.由于队列容量非常大，可以一直添加
+     *  4.执行完任务的线程反复去队列中取任务执行
+     *
+     * 用途：用于负载比较大的服务器，为了资源的合理利用，需要限制当前线程数量
+     *
      */
     public static ExecutorService newSingleThreadExecutor() {
         return new FinalizableDelegatedExecutorService
@@ -211,6 +224,13 @@ public class Executors {
      * may be created using {@link ThreadPoolExecutor} constructors.
      *
      * @return the newly created thread pool
+     * 返回一个可根据实际情况调整线程个数的线程池，不限制最大线程数量，
+     * 若有空闲的线程则执行任务，若无任务则不创建线程。并且每一个空闲线程会在 60 秒后自动回收。
+     *
+     * 执行流程：
+     * 1.没有核心线程，直接向 SynchronousQueue 提交任务；
+     * 2.如果有空闲线程，就去取出任务执行；如果没有空闲线程，就新建一个，再去取出任务执行；
+     * 3.执行完任务的线程有 60s 的生存时间，如果在这 60s 内可以接收到执行的任务，就可以继续存活，否则会被回收
      */
     public static ExecutorService newCachedThreadPool() {
         return new ThreadPoolExecutor(0, Integer.MAX_VALUE,
@@ -246,6 +266,8 @@ public class Executors {
      * {@code newScheduledThreadPool(1)} the returned executor is
      * guaranteed not to be reconfigurable to use additional threads.
      * @return the newly created scheduled executor
+     * 创建一个d单线程化的线程池，它只会用唯一的工作线程执行任务，
+     * 保证所有的任务按照顺序（FIFO, LIFO, 优先级）执行
      */
     public static ScheduledExecutorService newSingleThreadScheduledExecutor() {
         return new DelegatedScheduledExecutorService
@@ -280,6 +302,8 @@ public class Executors {
      * even if they are idle
      * @return a newly created scheduled thread pool
      * @throws IllegalArgumentException if {@code corePoolSize < 0}
+     *  创建一个可以指定线程的数量的线程池，但是这个线程池还带有
+     *  延迟和周期性执行任务的功能，类似定时器。
      */
     public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize) {
         return new ScheduledThreadPoolExecutor(corePoolSize);

@@ -12,6 +12,10 @@ public class HelloWorld {
         List<String> list = new ArrayList<>();
 
         list.add("s");
+        Thread thread = new Thread(()->{
+            System.out.println("1");
+        });
+        System.out.println(thread.isAlive());
     }
 
 
