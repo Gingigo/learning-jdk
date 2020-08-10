@@ -1,5 +1,3 @@
-import org.w3c.dom.ls.LSOutput;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -12,10 +10,6 @@ public class HelloWorld {
         List<String> list = new ArrayList<>();
 
         list.add("s");
-        Thread thread = new Thread(()->{
-            System.out.println("1");
-        });
-        System.out.println(thread.isAlive());
     }
 
 

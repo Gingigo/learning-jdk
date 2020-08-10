@@ -92,6 +92,7 @@ package java.util.concurrent;
  * @since 1.5
  * @author Doug Lea
  * @param <V> The result type returned by this Future's {@code get} method
+ * Future 表示一个任务的生命周期
  */
 public interface Future<V> {
 
@@ -123,6 +124,7 @@ public interface Future<V> {
      * normally.
      *
      * @return {@code true} if this task was cancelled before it completed
+     * 当前的 Future 是否被取消，返回 true 表示已取消
      */
     boolean isCancelled();
 
@@ -134,6 +136,7 @@ public interface Future<V> {
      * {@code true}.
      *
      * @return {@code true} if this task completed
+     * 当前 Future 是否已结束。包括运行完成、抛出异常以及取消，都表示当前 Future 已结束
      */
     boolean isDone();
 
@@ -147,6 +150,8 @@ public interface Future<V> {
      * exception
      * @throws InterruptedException if the current thread was interrupted
      * while waiting
+     * 获取 Future 的结果值。如果当前 Future 还没有结束，那么当前线程就等待，
+     * 直到 Future 运行结束，那么会唤醒等待结果值的线程的。
      */
     V get() throws InterruptedException, ExecutionException;
 
@@ -163,6 +168,7 @@ public interface Future<V> {
      * @throws InterruptedException if the current thread was interrupted
      * while waiting
      * @throws TimeoutException if the wait timed out
+     * 获取 Future 的结果值。与 get()相比较多了允许设置超时时间
      */
     V get(long timeout, TimeUnit unit)
         throws InterruptedException, ExecutionException, TimeoutException;
